@@ -75,6 +75,8 @@ fun LoginScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var usernameError by remember { mutableStateOf<String?>(null) }
+    var passwordError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val authManager = remember { AuthManager(context) }
@@ -117,35 +119,57 @@ fun LoginScreen(
                 password = password,
                 passwordVisible = passwordVisible,
                 isLoading = isLoading,
-                onUsernameChange = { username = it },
-                onPasswordChange = { password = it },
+                usernameError = usernameError,
+                passwordError = passwordError,
+                onUsernameChange = { 
+                    username = it
+                    usernameError = null // Clear error when user types
+                },
+                onPasswordChange = { 
+                    password = it
+                    passwordError = null // Clear error when user types
+                },
                 onPasswordVisibilityChange = { passwordVisible = !passwordVisible },
                 onLogin = {
-                    isLoading = true
-                    viewModel.login(
-                        username = username,
-                        password = password
-                    ) { success, message ->
-                        isLoading = false
-                        if (success) {
-                            // Token đã được tự động lưu và mã hóa trong AuthManager
-                            // Cập nhật trạng thái biometric
-                            isBiometricEnabled = viewModel.isBiometricEnabled()
-                            
-                            Toast.makeText(
-                                context, 
-                                "Đăng nhập thành công! Vân tay đã được kích hoạt.", 
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            
-                            navController.navigate("home"){
-                                popUpTo("login") {
-                                    inclusive = true
+                    // Validate inputs
+                    val usernameValidation = validateLoginUsername(username)
+                    val passwordValidation = validateLoginPassword(password)
+                    
+                    if (!usernameValidation.isValid) {
+                        usernameError = usernameValidation.errorMessage
+                    }
+                    if (!passwordValidation.isValid) {
+                        passwordError = passwordValidation.errorMessage
+                    }
+                    
+                    // Only proceed if both validations pass
+                    if (usernameValidation.isValid && passwordValidation.isValid) {
+                        isLoading = true
+                        viewModel.login(
+                            username = username,
+                            password = password
+                        ) { success, message ->
+                            isLoading = false
+                            if (success) {
+                                // Token đã được tự động lưu và mã hóa trong AuthManager
+                                // Cập nhật trạng thái biometric
+                                isBiometricEnabled = viewModel.isBiometricEnabled()
+                                
+                                Toast.makeText(
+                                    context, 
+                                    "Đăng nhập thành công! Vân tay đã được kích hoạt.", 
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                
+                                navController.navigate("home"){
+                                    popUpTo("login") {
+                                        inclusive = true
+                                    }
                                 }
+                            } else {
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                Log.d("LoginScreen", "Login failed: $message")
                             }
-                        } else {
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                            Log.d("LoginScreen", "Login failed: $message")
                         }
                     }
                 }
@@ -308,6 +332,8 @@ fun LoginForm(
     password: String,
     passwordVisible: Boolean,
     isLoading: Boolean,
+    usernameError: String?,
+    passwordError: String?,
     onUsernameChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordVisibilityChange: () -> Unit,
@@ -330,13 +356,25 @@ fun LoginForm(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
+            isError = usernameError != null,
+            supportingText = {
+                if (usernameError != null) {
+                    Text(
+                        text = usernameError,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = AppColors.CardBackground,
                 unfocusedContainerColor = AppColors.CardBackground.copy(alpha = 0.8f),
                 focusedBorderColor = AppColors.OrangeGradientStart,
                 unfocusedBorderColor = AppColors.CardBorder,
+                errorBorderColor = MaterialTheme.colorScheme.error,
+                errorContainerColor = AppColors.CardBackground,
                 focusedLabelColor = AppColors.OrangeGradientStart,
                 unfocusedLabelColor = AppColors.TextSecondary,
+                errorLabelColor = MaterialTheme.colorScheme.error,
                 cursorColor = AppColors.OrangeGradientStart
             )
         )
@@ -357,13 +395,25 @@ fun LoginForm(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
+            isError = passwordError != null,
+            supportingText = {
+                if (passwordError != null) {
+                    Text(
+                        text = passwordError,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = AppColors.CardBackground,
                 unfocusedContainerColor = AppColors.CardBackground.copy(alpha = 0.8f),
                 focusedBorderColor = AppColors.OrangeGradientStart,
                 unfocusedBorderColor = AppColors.CardBorder,
+                errorBorderColor = MaterialTheme.colorScheme.error,
+                errorContainerColor = AppColors.CardBackground,
                 focusedLabelColor = AppColors.OrangeGradientStart,
                 unfocusedLabelColor = AppColors.TextSecondary,
+                errorLabelColor = MaterialTheme.colorScheme.error,
                 cursorColor = AppColors.OrangeGradientStart
             ),
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -545,5 +595,53 @@ fun BiometricLoginSection(
             fontSize = 12.sp,
             color = if (enabled) AppColors.TextSecondary else AppColors.TextSecondary.copy(alpha = 0.5f)
         )
+    }
+}
+
+// Validation data class
+data class ValidationResult(
+    val isValid: Boolean,
+    val errorMessage: String? = null
+)
+
+// Username validation function
+fun validateLoginUsername(username: String): ValidationResult {
+    return when {
+        username.isBlank() -> ValidationResult(
+            isValid = false,
+            errorMessage = "Vui lòng nhập tài khoản"
+        )
+        username.length < 3 -> ValidationResult(
+            isValid = false,
+            errorMessage = "Tài khoản phải có ít nhất 3 ký tự"
+        )
+        username.length > 50 -> ValidationResult(
+            isValid = false,
+            errorMessage = "Tài khoản không được quá 50 ký tự"
+        )
+        !username.matches(Regex("^[a-zA-Z0-9._@-]+$")) -> ValidationResult(
+            isValid = false,
+            errorMessage = "Tài khoản chỉ được chứa chữ cái, số và các ký tự . _ @ -"
+        )
+        else -> ValidationResult(isValid = true)
+    }
+}
+
+// Password validation function
+fun validateLoginPassword(password: String): ValidationResult {
+    return when {
+        password.isBlank() -> ValidationResult(
+            isValid = false,
+            errorMessage = "Vui lòng nhập mật khẩu"
+        )
+        password.length < 6 -> ValidationResult(
+            isValid = false,
+            errorMessage = "Mật khẩu phải có ít nhất 6 ký tự"
+        )
+        password.length > 100 -> ValidationResult(
+            isValid = false,
+            errorMessage = "Mật khẩu không được quá 100 ký tự"
+        )
+        else -> ValidationResult(isValid = true)
     }
 }

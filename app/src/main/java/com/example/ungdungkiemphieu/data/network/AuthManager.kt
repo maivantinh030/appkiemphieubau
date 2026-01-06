@@ -36,12 +36,10 @@ class AuthManager(private val context: Context) {
             val expiryTime = System.currentTimeMillis() + (response.expiresIn ?: 3600) * 1000L
             prefs.edit().putLong(TOKEN_EXPIRY_KEY, expiryTime).apply()
         }
-        
         // Lưu refresh token (mã hóa)
         response.refreshToken?.let { refreshToken ->
             saveRefreshToken(refreshToken)
         }
-        
         response.user?.let{ saveUser(it) }
         // Đánh dấu session active sau khi login thành công
         setSessionActive(true)

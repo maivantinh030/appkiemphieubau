@@ -13,9 +13,10 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient{
-    private const val BASE_URL = "http://10.184.78.135:8000/"
+
     private lateinit var authManager: AuthManager
     private var onUnauthorized: (() -> Unit)? = null
+    private const val BASE_URL = "http://192.168.1.145:8000/"
     
     fun initialize(authManager: AuthManager, onUnauthorizedCallback: (() -> Unit)? = null){
         this.authManager = authManager
@@ -72,8 +73,8 @@ object RetrofitClient{
             .addInterceptor(loggingInterceptor)  // Thêm logging để debug
             .addInterceptor(authInterceptor)
             .authenticator(TokenAuthenticator(authManager))
-            .connectTimeout(500, TimeUnit.SECONDS)
-            .readTimeout(500, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 

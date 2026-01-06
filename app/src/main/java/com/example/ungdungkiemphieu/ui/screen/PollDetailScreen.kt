@@ -121,7 +121,7 @@ fun PollDetailScreen(
                     if(poll?.role == "manager" ||poll?.role == "checkin"){
                         VoterListButton(
                             onVoterListClick = {
-                                navController.navigate("voter_list/${pollId}")
+                                navController.navigate("voter_list_simple/${pollId}")
                             }
                         )
                     }
@@ -1052,8 +1052,6 @@ fun formatDateTime(dateTime: String?): String {
     return dateTime ?: "Chưa xác định"
 }
 
-
-
 fun getStatusText(status: String): String {
     return when (status.lowercase()) {
         "scheduled" -> "Chờ diễn ra"
@@ -1073,5 +1071,3 @@ fun PollDetailScreenPreview(){
     val navController = rememberNavController()
     PollDetailScreen(pollId = 1, navController = navController)
 }
-
-// Data class cho candidate (nếu chưa có)
