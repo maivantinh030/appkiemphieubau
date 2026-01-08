@@ -16,7 +16,7 @@ object RetrofitClient{
 
     private lateinit var authManager: AuthManager
     private var onUnauthorized: (() -> Unit)? = null
-    private const val BASE_URL = "http://192.168.1.145:8000/"
+    private const val BASE_URL = "http://192.168.0.102:8000/"
     
     fun initialize(authManager: AuthManager, onUnauthorizedCallback: (() -> Unit)? = null){
         this.authManager = authManager
