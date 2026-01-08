@@ -15,13 +15,29 @@ import java.util.concurrent.TimeUnit
 object RetrofitClient{
 
     private lateinit var authManager: AuthManager
+    private lateinit var settingsManager: SettingsManager
     private var onUnauthorized: (() -> Unit)? = null
-    private const val BASE_URL = "http://192.168.0.102:8000/"
+    private var retrofitInstance: Retrofit? = null
+    private var apiServiceInstance: ApiService? = null
     
-    fun initialize(authManager: AuthManager, onUnauthorizedCallback: (() -> Unit)? = null){
+    fun initialize(
+        authManager: AuthManager, 
+        settingsManager: SettingsManager,
+        onUnauthorizedCallback: (() -> Unit)? = null
+    ){
         this.authManager = authManager
+        this.settingsManager = settingsManager
         this.onUnauthorized = onUnauthorizedCallback
         Log.d("RetrofitClient", "RetrofitClient initialized, authManager: $authManager")
+    }
+    
+    /**
+     * Reset Retrofit instance khi BASE_URL thay đổi
+     */
+    fun resetInstance() {
+        retrofitInstance = null
+        apiServiceInstance = null
+        Log.d("RetrofitClient", "Retrofit instance reset")
     }
     
     // Logging interceptor để debug request/response
@@ -29,6 +45,22 @@ object RetrofitClient{
         level = HttpLoggingInterceptor.Level.BODY
     }
 
+    // Tạo Retrofit instance riêng để refresh token (tránh circular dependency)
+    private fun getRefreshTokenRetrofit(): Retrofit {
+        val baseUrl = settingsManager.getBaseUrl()
+        val client = OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+        
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+    
     // Interceptor kiểm tra và refresh token trước khi gửi request
     private val authInterceptor: Interceptor
         get() = Interceptor { chain ->
@@ -43,7 +75,9 @@ object RetrofitClient{
                             val refreshToken = authManager.getRefreshToken()
                             if (refreshToken != null) {
                                 val request = RefreshTokenRequest(refreshToken)
-                                val response = apiService.refreshToken(request)
+                                // Sử dụng Retrofit instance riêng để tránh circular dependency
+                                val refreshService = getRefreshTokenRetrofit().create(ApiService::class.java)
+                                val response = refreshService.refreshToken(request)
                                 
                                 if (response.success && response.accessToken != null) {
                                     authManager.updateAccessToken(
@@ -68,8 +102,8 @@ object RetrofitClient{
             chain.proceed(requestBuilder.build())
         }
 
-    private val client by lazy {
-        OkHttpClient.Builder()
+    private fun getClient(): OkHttpClient {
+        return OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)  // Thêm logging để debug
             .addInterceptor(authInterceptor)
             .authenticator(TokenAuthenticator(authManager))
@@ -77,13 +111,25 @@ object RetrofitClient{
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
     }
-
-    val apiService: ApiService by lazy{
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(ApiService::class.java)
+    
+    private fun getRetrofit(): Retrofit {
+        if (retrofitInstance == null) {
+            val baseUrl = settingsManager.getBaseUrl()
+            Log.d("RetrofitClient", "Creating Retrofit instance with BASE_URL: $baseUrl")
+            retrofitInstance = Retrofit.Builder()
+                .baseUrl(baseUrl)
+                .client(getClient())
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+        }
+        return retrofitInstance!!
     }
+
+    val apiService: ApiService
+        get() {
+            if (apiServiceInstance == null) {
+                apiServiceInstance = getRetrofit().create(ApiService::class.java)
+            }
+            return apiServiceInstance!!
+        }
 }

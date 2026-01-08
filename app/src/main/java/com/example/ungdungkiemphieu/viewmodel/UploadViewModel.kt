@@ -39,9 +39,6 @@ class UploadViewModel(
     var uploadError: String? = null
         private set
 
-    /**
-     * Upload single image immediately (không lưu pending)
-     */
     fun uploadSingleImage(
         bitmap: Bitmap,
         pollId: Int?,
@@ -212,5 +209,14 @@ class UploadViewModel(
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(1000 + pollId, notification)
+    }
+
+    /**
+     * Hủy quá trình upload nền đang chạy
+     */
+    fun cancelUpload(context: Context, pollId: Int) {
+        val workName = "upload_ballots_${pollId}"
+        WorkManager.getInstance(context).cancelUniqueWork(workName)
+        Log.d("UploadViewModel", "Cancelled upload work: $workName")
     }
 }

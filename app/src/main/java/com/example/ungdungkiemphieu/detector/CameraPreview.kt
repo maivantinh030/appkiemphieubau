@@ -12,7 +12,7 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Trace
 import android.util.Log
-import android.widget.Toast
+import android.os.Build
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -55,10 +55,14 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,6 +87,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.example.ungdungkiemphieu.data.model.*
@@ -103,7 +109,6 @@ import java.util.concurrent.Executors
 import java.io.ByteArrayOutputStream
 
 
-
 @Composable
 fun CameraScreen(
     modifier: Modifier = Modifier,
@@ -116,6 +121,8 @@ fun CameraScreen(
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     val localStorage = remember { LocalBallotStorage(context) }
     val detectionScope = rememberCoroutineScope()
+    val snackbarScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val authManager = remember { AuthManager(context) }
     val apiService = remember { RetrofitClient.apiService }
 
@@ -178,6 +185,8 @@ fun CameraScreen(
                 hasValidMarkers = hasValidMarkers,
                 totalMarkersFound = totalMarkersFound,
                 verifyResult = verifyResult,
+                snackbarHostState = snackbarHostState,
+                snackbarScope = snackbarScope,
                 onRetake = {
                     capturedBitmap = null
                     detectedMarkers = emptyList()
@@ -190,50 +199,46 @@ fun CameraScreen(
                 onConfirm = {
                     // Chỉ cho phép lưu nếu có đủ markers
                     if (!hasValidMarkers) {
-                        Toast.makeText(
-                            context,
-                            "⚠️ Không đủ markers! Cần 1 QR + 3 ArUco markers",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        snackbarScope.launch {
+                            snackbarHostState.showSnackbar("⚠️ Không đủ markers! Cần 1 QR + 3 ArUco markers")
+                        }
                         return@ImagePreviewScreen
                     }
 
                     // Kiểm tra verify result nếu có
                     if (verifyResult != null && !verifyResult!!.verified) {
-                        Toast.makeText(
-                            context,
-                            "❌ Phiếu bầu không hợp lệ! HMAC signature không đúng.",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        snackbarScope.launch {
+                            snackbarHostState.showSnackbar("❌ Phiếu bầu không hợp lệ! HMAC signature không đúng.")
+                        }
                         return@ImagePreviewScreen
                     }
 
                     if (pollId == null) {
-                        Toast.makeText(context, "Lỗi: Không có poll ID", Toast.LENGTH_SHORT).show()
+                        snackbarScope.launch {
+                            snackbarHostState.showSnackbar("Lỗi: Không có poll ID")
+                        }
                         return@ImagePreviewScreen
                     }
 
                     // Kiểm tra ballot đã được chụp chưa (nếu có ballotId từ verify)
                     val ballotId = verifyResult?.ballot_id
                     if (ballotId != null && localStorage.isBallotAlreadyProcessed(pollId, ballotId)) {
-                        Toast.makeText(
-                            context,
-                            "⚠️ Phiếu bầu này đã được chụp trước đó!\nBallot ID: $ballotId",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        snackbarScope.launch {
+                            snackbarHostState.showSnackbar("⚠️ Phiếu bầu này đã được chụp trước đó!\nBallot ID: $ballotId")
+                        }
                         return@ImagePreviewScreen
                     }
 
                     // Lưu ảnh vào file + thêm vào danh sách pending
                     localStorage.savePendingImage(pollId, capturedBitmap!!, detectedMarkers, ballotId)
 
-                    Toast.makeText(
-                        context,
-                        "✅ Đã lưu ảnh tạm thành công!\n" +
-                                "Đang chờ: ${localStorage.getPendingCount(pollId)} ảnh\n" +
-                                "Đã upload: ${localStorage.getUploadedCount(pollId)} ảnh",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    snackbarScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "✅ Đã lưu ảnh tạm thành công!\n" +
+                                    "Đang chờ: ${localStorage.getPendingCount(pollId)} ảnh\n" +
+                                    "Đã upload: ${localStorage.getUploadedCount(pollId)} ảnh"
+                        )
+                    }
 
                     // Quay lại màn hình chụp
                     capturedBitmap = null
@@ -313,6 +318,14 @@ fun CameraScreen(
                 onBackClick = { navController.popBackStack() }
             )
         }
+    }
+
+    // Hiển thị tiến độ upload nền ở góc trên bên phải màn hình camera
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
+        CameraUploadStatus(pollId = pollId)
     }
 }
 
@@ -476,6 +489,66 @@ fun CameraViewScreen(
                 .align(Alignment.BottomCenter)
                 .padding(32.dp)
         )
+    }
+}
+
+@Composable
+fun CameraUploadStatus(pollId: Int?) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    if (pollId == null) return
+
+    var state by remember { mutableStateOf<WorkInfo.State?>(null) }
+    var uploaded by remember { mutableStateOf(0) }
+    var total by remember { mutableStateOf(0) }
+
+    LaunchedEffect(pollId) {
+        val tag = "ballot_upload_${pollId}"
+        WorkManager.getInstance(context)
+            .getWorkInfosByTagLiveData(tag)
+            .observe(lifecycleOwner) { infos ->
+                val info = infos.lastOrNull()
+                if (info != null) {
+                    state = info.state
+                    val progress = info.progress
+                    uploaded = progress.getInt("uploaded", uploaded)
+                    total = progress.getInt("total", total)
+
+                    // Nếu đã thành công, override số lượng từ outputData (giống PollSummaryScreen)
+                    if (state == WorkInfo.State.SUCCEEDED) {
+                        uploaded = info.outputData.getInt("uploaded_count", uploaded)
+                    }
+                }
+            }
+    }
+
+    if (state == null || total == 0) return
+
+    // Hiển thị khi đang upload, đã xếp hàng hoặc vừa upload xong
+    if (
+        state == WorkInfo.State.RUNNING ||
+        state == WorkInfo.State.ENQUEUED ||
+        state == WorkInfo.State.SUCCEEDED
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color.Black.copy(alpha = 0.7f)
+            ) {
+                Text(
+                    text = "Upload $uploaded/$total",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
     }
 }
 
@@ -1082,6 +1155,8 @@ fun ImagePreviewScreen(
     hasValidMarkers: Boolean = false,
     totalMarkersFound: Int = 0,
     verifyResult: VerifyHmacResponse? = null,
+    snackbarHostState: SnackbarHostState,
+    snackbarScope: CoroutineScope,
     onRetake: () -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -1236,35 +1311,62 @@ fun ImagePreviewScreen(
             ) {
                 FloatingActionButton(
                     onClick = {
-                        if (!isUploading && hasValidMarkers && pollId != null) {
-                            // Kiểm tra ballot đã được chụp chưa
-                            val ballotId = verifyResult?.ballot_id
-                            if (ballotId != null && localStorage.isBallotAlreadyProcessed(pollId, ballotId)) {
-                                Toast.makeText(
-                                    context,
-                                    "⚠️ Phiếu bầu này đã được chụp trước đó!\nBallot ID: $ballotId",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                                return@FloatingActionButton
-                            }
+                        if (!hasValidMarkers || pollId == null) {
+                            return@FloatingActionButton
+                        }
+                        if (isUploading) {
+                            return@FloatingActionButton
+                        }
 
-                            isUploading = true
+                        // Kiểm tra ballot đã được chụp trước đó chưa
+                        val ballotId = verifyResult?.ballot_id
+                        if (ballotId != null && localStorage.isBallotAlreadyProcessed(pollId, ballotId)) {
+                            snackbarScope.launch {
+                                snackbarHostState.showSnackbar("⚠️ Phiếu bầu này đã được chụp trước đó!\nBallot ID: $ballotId")
+                            }
+                            return@FloatingActionButton
+                        }
+
+                        isUploading = true
+
+                        // Lưu ảnh vào danh sách pending
+                        localStorage.savePendingImage(
+                            pollId = pollId,
+                            bitmap = bitmap,
+                            detectedMarkers = detectedMarkers,
+                            ballotId = ballotId
+                        )
+
+                        // Lên lịch upload nền bằng WorkManager
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            uploadViewModel.scheduleUploadAllPendingImages(
+                                context = context,
+                                pollId = pollId,
+                                batchSize = 3
+                            )
+                            snackbarScope.launch {
+                                snackbarHostState.showSnackbar("✅ Đã đưa ảnh vào hàng chờ upload nền")
+                            }
+                        } else {
+                            // Fallback cho thiết bị API thấp: vẫn upload trực tiếp
                             uploadViewModel.uploadSingleImage(
                                 bitmap = bitmap,
                                 pollId = pollId,
                                 context = context
                             ) { success, message ->
-                                isUploading = false
-                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                snackbarScope.launch {
+                                    snackbarHostState.showSnackbar(message)
+                                }
                                 if (success) {
-                                    // Lưu ảnh vào local storage và đánh dấu đã upload
                                     localStorage.saveAsUploaded(pollId, bitmap, detectedMarkers, ballotId)
-                                    
-                                    // Quay về camera để chụp tiếp
-                                    onRetake()
                                 }
                             }
                         }
+
+                        isUploading = false
+
+                        // Quay lại camera để chụp tiếp
+                        onRetake()
                     },
                                     
                     modifier = Modifier.size(64.dp),
@@ -1336,6 +1438,19 @@ fun ImagePreviewScreen(
                         .padding(horizontal = 12.dp, vertical = 4.dp)
                 )
             }
+        }
+
+        // SnackbarHost để hiển thị thông báo
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 100.dp)
+        ) { snackbarData ->
+            Snackbar(
+                snackbarData = snackbarData,
+                modifier = Modifier.padding(16.dp)
+            )
         }
     }
 }

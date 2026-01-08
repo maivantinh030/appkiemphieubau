@@ -25,6 +25,7 @@ import androidx.navigation.navArgument
 import com.example.ungdungkiemphieu.data.model.*
 import com.example.ungdungkiemphieu.data.network.AuthManager
 import com.example.ungdungkiemphieu.data.network.RetrofitClient
+import com.example.ungdungkiemphieu.data.network.SettingsManager
 import com.example.ungdungkiemphieu.detector.CameraScreen
 import com.example.ungdungkiemphieu.ui.screen.*
 
@@ -35,6 +36,7 @@ import kotlin.text.toIntOrNull
 fun AppNavGraph(){
     val context = LocalContext.current
     val authManager = remember { AuthManager(context) }
+    val settingsManager = remember { SettingsManager(context) }
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     var selectedPoll by remember { mutableStateOf<Poll?>(null) }
@@ -80,7 +82,7 @@ fun AppNavGraph(){
     
     // Handle logout callback from RetrofitClient (when token expires)
     LaunchedEffect(Unit) {
-        RetrofitClient.initialize(authManager) {
+        RetrofitClient.initialize(authManager, settingsManager) {
             // Navigate to login when token expires
             navController.navigate("login") {
                 popUpTo(0) { inclusive = true }
@@ -184,11 +186,6 @@ fun AppNavGraph(){
                 composable("voter_list/{pollId}") { backStackEntry ->
                     val pollId = backStackEntry.arguments?.getString("pollId")?.toIntOrNull()
                     VoterListScreen(pollId = pollId, navController = navController)
-                }
-
-                composable("voter_list_simple/{pollId}") { backStackEntry ->
-                    val pollId = backStackEntry.arguments?.getString("pollId")?.toIntOrNull()
-                    VoterListScreenSimple(pollId, navController)
                 }
 
             }

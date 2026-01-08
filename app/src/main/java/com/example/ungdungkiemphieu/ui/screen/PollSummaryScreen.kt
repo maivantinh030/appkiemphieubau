@@ -74,6 +74,7 @@ fun PollSummaryScreen(pollId: Int?, navController: NavController) {
     var isScheduling by remember { mutableStateOf(false) }
     var selectedImageBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var selectedImageType by remember { mutableStateOf<String?>(null) }
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
 
     // Trigger state to refresh gallery and stats
     var refreshTrigger by remember { mutableStateOf(0) }
@@ -174,9 +175,10 @@ fun PollSummaryScreen(pollId: Int?, navController: NavController) {
                             storage = storage,
                             selectedTab = galleryTab,
                             onTabChange = { galleryTab = it },
-                            onImageClick = { bitmap, type ->
+                            onImageClick = { bitmap, type, fileName ->
                                 selectedImageBitmap = bitmap
                                 selectedImageType = type
+                                selectedFileName = fileName
                             }
                         )
                     }
@@ -193,38 +195,6 @@ fun PollSummaryScreen(pollId: Int?, navController: NavController) {
                     )
                 }
 
-                // Upload thường (foreground)
-                item {
-                    UploadAllButton(
-                        pendingCount = pendingCount,
-                        isUploading = isUploading,
-                        onClick = {
-                            if (pendingCount > 0 && !isUploading) {
-                                isUploading = true
-                                uploadViewModel.uploadAllPendingImages(
-                                    pollId = pollId,
-                                    context = context
-                                ) { success, message ->
-                                    isUploading = false
-                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-
-                                    if (success) {
-                                        refreshTrigger++
-                                        if (storage.getPendingCount(pollId) == 0) {
-                                            galleryTab = "uploaded"
-                                        }
-                                    }
-                                }
-                            } else if (pendingCount == 0) {
-                                Toast.makeText(
-                                    context,
-                                    "Không có ảnh nào cần upload",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    )
-                }
 
                 // Upload nền (WorkManager)
                 item {
@@ -256,6 +226,7 @@ fun PollSummaryScreen(pollId: Int?, navController: NavController) {
                 item {
                     BackgroundUploadStatus(
                         pollId = pollId,
+                        uploadViewModel = uploadViewModel,
                         onSucceeded = {
                             refreshTrigger++
                             if (storage.getPendingCount(pollId) == 0) {
@@ -269,14 +240,24 @@ fun PollSummaryScreen(pollId: Int?, navController: NavController) {
             }
         }
 
-        // Image preview dialog - GIỮ NGUYÊN
+        // Image preview dialog
         if (selectedImageBitmap != null) {
             ImagePreviewDialog(
                 bitmap = selectedImageBitmap!!,
                 imageType = selectedImageType ?: "unknown",
+                fileName = selectedFileName,
+                pollId = pollId,
+                storage = storage,
                 onDismiss = {
                     selectedImageBitmap = null
                     selectedImageType = null
+                    selectedFileName = null
+                },
+                onDeleted = {
+                    refreshTrigger++
+                    selectedImageBitmap = null
+                    selectedImageType = null
+                    selectedFileName = null
                 }
             )
         }
@@ -294,7 +275,7 @@ fun SimpleImprovedImagesGalleryCard(
     storage: LocalBallotStorage,
     selectedTab: String,
     onTabChange: (String) -> Unit,
-    onImageClick: (android.graphics.Bitmap, String) -> Unit
+    onImageClick: (android.graphics.Bitmap, String, String) -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -339,7 +320,7 @@ fun SimpleImprovedImagesGalleryCard(
                     pollId = pollId,
                     storage = storage,
                     type = selectedTab,
-                    onImageClick = { bitmap -> onImageClick(bitmap, selectedTab) }
+                            onImageClick = { bitmap, fileName -> onImageClick(bitmap, selectedTab, fileName) }
                 )
             }
         }
@@ -460,7 +441,7 @@ fun SimpleImagesGrid(
     pollId: Int?,
     storage: LocalBallotStorage,
     type: String,
-    onImageClick: (android.graphics.Bitmap) -> Unit
+    onImageClick: (android.graphics.Bitmap, String) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -495,7 +476,7 @@ fun SimpleImagesGrid(
                     onClick = {
                         val bitmap = BitmapFactory.decodeFile(file.absolutePath)
                         if (bitmap != null) {
-                            onImageClick(bitmap)
+                            onImageClick(bitmap, fileName)
                         }
                     }
                 )
@@ -885,8 +866,15 @@ fun UploadAllButton(
 fun ImagePreviewDialog(
     bitmap: android.graphics.Bitmap,
     imageType: String,
-    onDismiss: () -> Unit
+    fileName: String?,
+    pollId: Int?,
+    storage: LocalBallotStorage,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit
 ) {
+    val context = LocalContext.current
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     Dialog(
         onDismissRequest = { onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -924,12 +912,31 @@ fun ImagePreviewDialog(
                         color = Color.White
                     )
 
-                    IconButton(onClick = { onDismiss() }) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = Color.White
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Nút xóa chỉ hiển thị khi là pending
+                        if (imageType == "pending" && fileName != null && pollId != null) {
+                            IconButton(
+                                onClick = { showDeleteConfirm = true }
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Xóa ảnh",
+                                    tint = Color(0xFFFF5252),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        
+                        IconButton(onClick = { onDismiss() }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Đóng",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -948,14 +955,67 @@ fun ImagePreviewDialog(
             }
         }
     }
+
+    // Dialog xác nhận xóa
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = {
+                Text(
+                    text = "Xóa ảnh",
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Bạn có chắc chắn muốn xóa ảnh này không?",
+                    color = AppColors.TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (fileName != null && pollId != null) {
+                            val success = storage.deletePendingImage(pollId, fileName)
+                            if (success) {
+                                Toast.makeText(context, "Đã xóa ảnh", Toast.LENGTH_SHORT).show()
+                                showDeleteConfirm = false
+                                onDeleted()
+                            } else {
+                                Toast.makeText(context, "Không thể xóa ảnh", Toast.LENGTH_SHORT).show()
+                                showDeleteConfirm = false
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF5252)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Xóa",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirm = false },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = AppColors.TextSecondary
+                    )
+                ) {
+                    Text("Hủy")
+                }
+            },
+            containerColor = AppColors.CardBackground,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
 }
 
-@Preview(showBackground = true)
-@Composable
-fun PollSummaryScreenPreview(){
-    val navController = rememberNavController()
-    PollSummaryScreen(pollId = 1, navController = navController)
-}
 
 @Composable
 fun UploadAllBackgroundButton(
@@ -1038,7 +1098,7 @@ fun UploadAllBackgroundButton(
 
                 Column {
                     Text(
-                        text = if (isScheduling) "Đang lên lịch..." else "Upload nền (WorkManager)",
+                        text = if (isScheduling) "Đang lên lịch..." else "Upload tất cả ảnh",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (isEnabled) AppColors.TextPrimary else AppColors.TextSecondary
@@ -1068,7 +1128,11 @@ fun UploadAllBackgroundButton(
 }
 
 @Composable
-fun BackgroundUploadStatus(pollId: Int?, onSucceeded: () -> Unit) {
+fun BackgroundUploadStatus(
+    pollId: Int?, 
+    uploadViewModel: UploadViewModel,
+    onSucceeded: () -> Unit
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -1147,12 +1211,39 @@ fun BackgroundUploadStatus(pollId: Int?, onSucceeded: () -> Unit) {
                     )
                 }
 
-                if (total > 0) {
-                    Text(
-                        text = "${(percent * 100).toInt()}%",
-                        fontSize = 14.sp,
-                        color = AppColors.TextSecondary
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (total > 0) {
+                        Text(
+                            text = "${(percent * 100).toInt()}%",
+                            fontSize = 14.sp,
+                            color = AppColors.TextSecondary
+                        )
+                    }
+                    // Nút hủy khi đang chạy hoặc đang chờ
+                    if (state == WorkInfo.State.RUNNING || state == WorkInfo.State.ENQUEUED) {
+                        TextButton(
+                            onClick = {
+                                uploadViewModel.cancelUpload(context, pollId)
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Hủy upload",
+                                tint = Color(0xFFFF5252),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Hủy",
+                                fontSize = 14.sp,
+                                color = Color(0xFFFF5252),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                 }
             }
 

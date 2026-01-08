@@ -1,6 +1,8 @@
 package com.example.ungdungkiemphieu.ui.screen
 
 import com.example.ungdungkiemphieu.data.network.AuthManager
+import com.example.ungdungkiemphieu.data.network.RetrofitClient
+import com.example.ungdungkiemphieu.data.network.SettingsManager
 import com.example.ungdungkiemphieu.repository.LoginRepository
 import com.example.ungdungkiemphieu.ui.theme.AppColors
 import com.example.ungdungkiemphieu.viewmodel.LoginViewModel
@@ -30,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Fingerprint
@@ -61,6 +64,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavController
 
@@ -80,11 +84,13 @@ fun LoginScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val authManager = remember { AuthManager(context) }
+    val settingsManager = remember { SettingsManager(context) }
     val repository = remember { LoginRepository(authManager) }
     val viewModel = remember { LoginViewModel(repository) }
     val biometricHelper = remember { BiometricHelper(context) }
     val isBiometricAvailable = remember { biometricHelper.canAuthenticate() }
     var isBiometricEnabled by remember { mutableStateOf(viewModel.isBiometricEnabled()) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -101,6 +107,21 @@ fun LoginScreen(
     ) {
         // Background decorative elements
         BackgroundDecorations()
+        
+        // Settings icon button ở góc trên bên phải
+        IconButton(
+            onClick = { showSettingsDialog = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Cài đặt",
+                tint = AppColors.TextSecondary,
+                modifier = Modifier.size(24.dp)
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -224,6 +245,32 @@ fun LoginScreen(
             SignupSection(
                 onSignupClick = {
                     navController.navigate("signup")
+                }
+            )
+        }
+        
+        // Settings Dialog
+        if (showSettingsDialog) {
+            SettingsDialog(
+                currentBaseUrl = settingsManager.getBaseUrl(),
+                onDismiss = { showSettingsDialog = false },
+                onSave = { newUrl ->
+                    if (settingsManager.isValidUrl(newUrl)) {
+                        settingsManager.saveBaseUrl(newUrl)
+                        RetrofitClient.resetInstance()
+                        Toast.makeText(
+                            context,
+                            "Đã lưu BASE_URL mới: $newUrl",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        showSettingsDialog = false
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "URL không hợp lệ. Vui lòng nhập URL đúng định dạng (ví dụ: http://192.168.0.102:8000)",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
             )
         }
@@ -644,4 +691,118 @@ fun validateLoginPassword(password: String): ValidationResult {
         )
         else -> ValidationResult(isValid = true)
     }
+}
+
+@Composable
+fun SettingsDialog(
+    currentBaseUrl: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var baseUrl by remember { mutableStateOf(currentBaseUrl) }
+    var urlError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Cài đặt BASE_URL",
+                fontWeight = FontWeight.Bold,
+                color = AppColors.TextPrimary
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Nhập địa chỉ server API:",
+                    fontSize = 14.sp,
+                    color = AppColors.TextSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { 
+                        baseUrl = it
+                        urlError = null // Clear error when user types
+                    },
+                    label = {
+                        Text(
+                            text = "BASE_URL",
+                            color = AppColors.TextSecondary
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    isError = urlError != null,
+                    supportingText = {
+                        if (urlError != null) {
+                            Text(
+                                text = urlError!!,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = AppColors.CardBackground,
+                        unfocusedContainerColor = AppColors.CardBackground.copy(alpha = 0.8f),
+                        focusedBorderColor = AppColors.OrangeGradientStart,
+                        unfocusedBorderColor = AppColors.CardBorder,
+                        errorBorderColor = MaterialTheme.colorScheme.error,
+                        errorContainerColor = AppColors.CardBackground,
+                        focusedLabelColor = AppColors.OrangeGradientStart,
+                        unfocusedLabelColor = AppColors.TextSecondary,
+                        errorLabelColor = MaterialTheme.colorScheme.error,
+                        cursorColor = AppColors.OrangeGradientStart
+                    )
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Ví dụ: http://192.168.0.102:8000",
+                    fontSize = 12.sp,
+                    color = AppColors.TextSecondary.copy(alpha = 0.7f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    // Validate URL
+                    if (baseUrl.isBlank()) {
+                        urlError = "Vui lòng nhập BASE_URL"
+                    } else {
+                        val normalizedUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                        try {
+                            java.net.URL(normalizedUrl)
+                            onSave(normalizedUrl)
+                        } catch (e: Exception) {
+                            urlError = "URL không hợp lệ"
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AppColors.OrangeGradientStart
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "Lưu",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = AppColors.TextSecondary
+                )
+            ) {
+                Text("Hủy")
+            }
+        },
+        containerColor = AppColors.CardBackground,
+        shape = RoundedCornerShape(20.dp)
+    )
 }

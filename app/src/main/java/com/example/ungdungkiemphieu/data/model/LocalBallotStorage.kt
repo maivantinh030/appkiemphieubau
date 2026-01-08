@@ -111,6 +111,34 @@ class LocalBallotStorage(private val context: Context) {
         }
     }
 
+    /** Xóa hoàn toàn một ảnh pending (xóa cả file và metadata) */
+    fun deletePendingImage(pollId: Int?, fileName: String): Boolean {
+        try {
+            // Xóa file ảnh
+            val pollDir = File(ballotsDir, "poll_$pollId")
+            val file = File(pollDir, fileName)
+            if (file.exists()) {
+                file.delete()
+            }
+
+            // Xóa khỏi danh sách pending
+            val key = "$KEY_PENDING_LIST$pollId"
+            val list = getPendingImages(pollId).toMutableList()
+            list.removeAll { it.fileName == fileName }
+
+            if (list.isEmpty()) {
+                prefs.edit().remove(key).apply()
+            } else {
+                prefs.edit().putString(key, gson.toJson(list)).apply()
+            }
+
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
+    }
+
     /** Xóa toàn bộ ảnh của một poll (khi cần reset) */
     fun clearAllForPoll(pollId: Int) {
         File(ballotsDir, "poll_$pollId").deleteRecursively()

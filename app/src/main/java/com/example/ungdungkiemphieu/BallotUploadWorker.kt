@@ -63,6 +63,19 @@ class BallotUploadWorker(
             var hasError = false
             var lastError: Exception? = null
             for (chunk in pendingInfos.chunked(batchSize)) {
+                // Kiểm tra xem work có bị cancel không
+                if (isStopped) {
+                    Log.d("BallotUploadWorker", "Work cancelled. Uploaded $uploadedCount images successfully.")
+                    // Hiển thị notification về việc cancel
+                    showCompletionNotification(
+                        uploadedCount, 
+                        true, 
+                        "Đã hủy upload. $uploadedCount ảnh đã upload thành công."
+                    )
+                    // Return success với số lượng đã upload để giữ lại các ảnh đã upload thành công
+                    return@withContext Result.success(workDataOf("uploaded_count" to uploadedCount))
+                }
+                
                 try {
                     val bitmaps = chunk.mapNotNull { info ->
                         val file = localStorage.getImageFile(pollId, info)
@@ -71,6 +84,7 @@ class BallotUploadWorker(
                     if (bitmaps.isEmpty()) continue
                     val response =
                         uploadRepository.uploadBallots(bitmaps, pollId, applicationContext)
+                    // Chỉ chuyển sang uploaded khi upload thành công
                     chunk.forEach { info ->
                         runCatching { localStorage.incrementUploadedCount(pollId, info.fileName) }
                         runCatching { localStorage.removePendingImage(pollId, info.fileName) }
